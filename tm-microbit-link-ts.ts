@@ -30,8 +30,7 @@ namespace iaMachine {
     const IA_EVENT_ID = 9100;
     let procesandoEvento = false;
     let autoConfirmar = false;
-
-    bluetooth.startUartService();
+    let iniciado = false;
 
     function generarId(texto: string): number {
         let hash = 0;
@@ -41,21 +40,33 @@ namespace iaMachine {
         return Math.abs(hash);
     }
 
-    // PROCESADOR DE DATOS
-    bluetooth.onUartDataReceived(serial.delimiters(Delimiters.NewLine), function () {
-        let datos = bluetooth.uartReadUntil(serial.delimiters(Delimiters.NewLine));
-        datos = datos.trim();
-        if (datos.length > 0) {
-            let partes = datos.split("#");
-            if (partes.length === 2) {
-                let claseRecibida = partes[0];
-                let certezaRecibida = parseInt(partes[1]);
-                ultimaClase = claseRecibida;
-                certezaActual = certezaRecibida;
-                control.raiseEvent(IA_EVENT_ID, generarId(claseRecibida));
+    /**
+     * Arranca el servicio UART y registra el receptor de datos.
+     * La llama cada bloque de la extensión, así que corre en tiempo de
+     * programa de usuario y NO en la inicialización del paquete.
+     * Es idempotente: solo el primer llamado hace algo.
+     */
+    function asegurarIniciado() {
+        if (iniciado) return;
+        iniciado = true;
+
+        bluetooth.startUartService();
+
+        bluetooth.onUartDataReceived(serial.delimiters(Delimiters.NewLine), function () {
+            let datos = bluetooth.uartReadUntil(serial.delimiters(Delimiters.NewLine));
+            datos = datos.trim();
+            if (datos.length > 0) {
+                let partes = datos.split("#");
+                if (partes.length === 2) {
+                    let claseRecibida = partes[0];
+                    let certezaRecibida = parseInt(partes[1]);
+                    ultimaClase = claseRecibida;
+                    certezaActual = certezaRecibida;
+                    control.raiseEvent(IA_EVENT_ID, generarId(claseRecibida));
+                }
             }
-        }
-    });
+        });
+    }
 
     //% blockId=ia_on_class_threshold
     //% block="al detectar %clase con certeza > %umbral \\%"
@@ -63,6 +74,7 @@ namespace iaMachine {
     //% clase.shadow="tm_clase_picker"
     //% weight=100
     export function alDetectarClase(clase: number, umbral: number, handler: () => void) {
+        asegurarIniciado();
         let nombreClase = _tmClaseNombres[clase] || "desconocido";
         control.onEvent(IA_EVENT_ID, generarId(nombreClase), function () {
             if (procesandoEvento) return;
@@ -85,6 +97,7 @@ namespace iaMachine {
     //% umbral.min=0 umbral.max=100 umbral.defl=80
     //% weight=95
     export function alDetectarCualquierClase(umbral: number, handler: () => void) {
+        asegurarIniciado();
         control.onEvent(IA_EVENT_ID, 0, function () {
             if (procesandoEvento) return;
             if (certezaActual >= umbral) {
@@ -100,9 +113,7 @@ namespace iaMachine {
 
     /**
      * Se ejecuta continuamente mientras se detecta la clase indicada
-     * con una certeza igual o superior al umbral. El código dentro del
-     * bloque controla su propio ritmo mediante `pause` o reproducciones
-     * sincrónicas (por ejemplo `music.play(..., UntilDone)`).
+     * con una certeza igual o superior al umbral.
      */
     //% blockId=ia_while_class_threshold
     //% block="mientras se detecta %clase con certeza > %umbral \\%"
@@ -110,6 +121,7 @@ namespace iaMachine {
     //% clase.shadow="tm_clase_picker"
     //% weight=98
     export function mientrasSeDetecta(clase: number, umbral: number, handler: () => void) {
+        asegurarIniciado();
         let nombreClase = _tmClaseNombres[clase] || "desconocido";
         control.inBackground(function () {
             while (true) {
@@ -128,6 +140,7 @@ namespace iaMachine {
     //% block="clase detectada"
     //% weight=90
     export function claseDetectada(): string {
+        asegurarIniciado();
         return ultimaClase;
     }
 
@@ -138,6 +151,7 @@ namespace iaMachine {
     //% block="certeza detectada"
     //% weight=85
     export function certezaDetectada(): number {
+        asegurarIniciado();
         return certezaActual;
     }
 
@@ -149,6 +163,7 @@ namespace iaMachine {
     //% weight=80
     //% advanced=true
     export function habilitarModoControlado() {
+        asegurarIniciado();
         autoConfirmar = true;
     }
 
@@ -171,6 +186,7 @@ namespace iaMachine {
     //% weight=78
     //% advanced=true
     export function enviarListo() {
+        asegurarIniciado();
         bluetooth.uartWriteString("OK\n");
     }
 
@@ -183,6 +199,7 @@ namespace iaMachine {
     //% block="al conectar a la app"
     //% weight=70
     export function alConectar(handler: () => void) {
+        asegurarIniciado();
         bluetooth.onBluetoothConnected(handler);
     }
 
@@ -193,6 +210,7 @@ namespace iaMachine {
     //% block="al desconectar de la app"
     //% weight=69
     export function alDesconectar(handler: () => void) {
+        asegurarIniciado();
         bluetooth.onBluetoothDisconnected(handler);
     }
 }
